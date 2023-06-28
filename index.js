@@ -3,28 +3,38 @@ require('dotenv').config();
 const express = require('express');
 const dns = require('dns');
 const cors = require('cors');
-const bodyPparser = require("body-parser");
+const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 
-
 const app = express();
-app.use(bodyPparser.urlencoded({ extended: false }));
-app.use(bodyPparser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
 
 // Basic Configuration
 const port = process.env.PORT || 3000;
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
+
+const connect = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URI);
+    console.log('Connected to MongoDB');
+  } catch (err) {
+    throw err;
+  }
+};
+
+const db = mongoose.connection;
+db.on('error', console.error.bind(console, 'Connection error: '));
+db.once('open', function () {
+  console.log('Connected successfully');
 });
 
 app.use(cors());
+
 const urlSchema = mongoose.Schema({
   original_url: String,
   short_url: Number,
-})
+});
 const URL = mongoose.model('URL', urlSchema);
-
 
 app.get('/', function (req, res) {
   res.sendFile(process.cwd() + '/views/index.html');
@@ -34,59 +44,68 @@ app.get('/', function (req, res) {
 app.get('/api/hello', function (req, res) {
   res.json({ greeting: 'hello API' });
 });
-app.post('api/shorturl', (req, res) => {
+
+app.post('/api/shorturl', async (req, res) => {
   const { url } = req.body;
 
-  dns.lookup(url, (err) => {
-    if (err) {
-      res.json({ error: 'invalid url' });
-    } else {
-      URL.findOne({ original_url: url })
-        .then((result) => {
-          if (result) {
-            res.json({ original_url: url, short_url: result.short_url });
-          } else {
-            const shortURL = Math.floor(Math.random() * 10000) + 1;
+  try {
+    await dns.promises.lookup(url);
 
-            const newURL = new URL({ original_url: url, short_url: shortURL });
-            newURL.save()
-              .then(() => {
-                res.json({ original_url: url, short_url: shortURL });
-              })
-              .catch((error) => {
-                console.error(error);
-                res.status(500).json({ error: 'An error occurred while saving the URL' });
-              });
-          }
-        })
-        .catch((error) => {
-          console.error(error);
-          res.status(500).json({ error: 'An error occurred while querying the database' });
-        });
+    const result = await URL.findOne({ original_url: url });
+
+    if (result) {
+      res.json({ original_url: url, short_url: result.short_url });
+    } else {
+      const shortURL = Math.floor(Math.random() * 10000) + 1;
+      const newURL = new URL({ original_url: url, short_url: shortURL });
+
+      await newURL.save();
+
+      res.json({ original_url: url, short_url: shortURL });
     }
-  });
+  } catch (error) {
+    console.error(error);
+    res.json({ error: 'Invalid URL' });
+  }
 });
 
-app.get('api/shorturl/:shorturl', (req, res) => {
+// app.get('/api/shorturl/:shorturl', async (req, res) => {
+//   const shortURL = req.params.shorturl;
+
+//   try {
+//     const result = await URL.findOne({ short_url: shortURL });
+
+//     if (result) {
+//       res.redirect(result.original_url);
+//     } else {
+//       res.json({ error: 'Short URL not found' });
+//     }
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ error: 'An error occurred while querying the database' });
+//   }
+// });
+app.get('/api/shorturl/:shorturl', async (req, res) => {
   const shortURL = req.params.shorturl;
 
-  URL.findOne({ short_url: shortURL })
-    .then((result) => {
-      if (result) {
-        // Redirect the user to the original URL
-        res.redirect(result.original_url);
-      } else {
-        res.json({ error: 'short URL not found' });
-      }
-    })
-    .catch((error) => {
-      console.error(error);
-      res.status(500).json({ error: 'An error occurred while querying the database' });
-    });
+  try {
+    const result = await URL.findOne({ short_url: shortURL });
+
+    if (result) {
+      res.redirect(result.original_url);
+      console.log(result.original_url);
+    } else {
+      res.status(404).json({ error: 'Short URL not found' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'An error occurred while querying the database' });
+  }
 });
 
+
+connect().catch(console.error);
 
 app.listen(port, function () {
   console.log(`Listening on port ${port}`);
 });
-
